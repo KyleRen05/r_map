@@ -1,5 +1,11 @@
+use std::io::Read;
+use std::f32::consts::E;
 use std::net::IpAddr;
+use std::ptr::addr_of_mut;
 use std::time::{Duration, Instant};
+use std::mem::MaybeUninit;
+use etherparse::checksum;
+use pnet::packet::ipv4::Ipv4;
 use socket2::{Domain, Protocol, Socket, Type};
 
 // Public enum for ping output
@@ -37,7 +43,64 @@ fn calculate_checksum(data: &[u8]) -> u16 {
     }
 
     // flip all the bits (!) to finalize checksum
-    !sum as u16;
+    !sum as u16
+
+}
+
+// Ping Function
+pub async fn ping(target: IpAddr, timeout: Duration) -> PingStatus {
+    let domain = match target {
+        IpAddr::V4(_) => Domain::IPV4,
+        IpAddr::V6(_) => Domain::IPV6,
+    };
+
+    // Type::RAW -> Not TCP or UDP | Raw IP payload
+    let mut socket = match Socket::new(domain, Type::RAW, Some(Protocol::ICMPV4)) {
+        Ok(s) => s,
+        Err(e) => return PingStatus::NetworkError(e),
+    };
+
+    let mut packet = vec![8, 0, 0, 0, 0x12, 0x34, 0x00, 0x01];
+    packet.extend_from_slice(b"HelloRust");
+
+    // calculate checksum of packet
+    let checksum = calculate_checksum(&packet);
+
+    // slice notation - grab 3rd and 4th bytes adn overwrite with checksum value
+    packet[2..4].copy_from_slice(&checksum.to_be_bytes());
+
+    // sending packet
+    // convert Rust standard IPAddr into socket2 format
+    let addr = socket2::SockAddr::from(std::net::SocketAddr::new(target, 0));
+    // start timer
+    let start_time = Instant::now();
+
+    if let Err(e) = socket.send_to(&packet, &addr) {
+        return PingStatus::NetworkError(e);
+    }
+
+    // Receive loop
+    let mut buf: [u8; 1024] = [0; 1024];
+    loop {
+        if start_time.elapsed() > timeout {
+            return PingStatus::TimedOut;
+        }
+
+        match socket.read(&mut buf) {
+            Ok(bytes_read) => {
+                let ip_header_len = 20;
+                if bytes_read > ip_header_len {
+                    let icmp_packet = &buf[ip_header_len..bytes_read];
+                    if icmp_packet.len() > 1 && icmp_packet[0] == 0 {
+                        return PingStatus::Reply(start_time.elapsed());
+                    }
+                }
+            }
+
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(e) => return PingStatus::NetworkError(e),
+        }
+    }
 
 }
 
