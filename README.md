@@ -35,11 +35,11 @@ The point of network mapping is to create a map of all the devices connected to 
 > ### pub async fn ping
 >
 > ICMP Header<br/>
-<ol>
-<li>Type (1 byte): 8 means "Echo Request".</li>
-<li>Code (1 byte): 0 is standard for pings.</li>
-<li>Checksum (2 bytes): 0, 0 (We set this to zero initially before we calculate the real checksum).</li>
-<li>Identifier (2 bytes): 0x12, 0x34 (An arbitrary ID to help us identify our specific ping).</li>
-<li>Sequence (2 bytes): 0x00, 0x01 (Keeps track of which ping this is, e.g., ping #1).</li>
-</ol>
+> <ol>
+> <li>Type (1 byte): 8 means "Echo Request".</li>
+> <li>Code (1 byte): 0 is standard for pings.</li>
+> <li>Checksum (2 bytes): 0, 0 (We set this to zero initially before we calculate the real checksum).</li>
+> <li>Identifier (2 bytes): 0x12, 0x34 (An arbitrary ID to help us identify our specific ping).</li>
+> <li>Sequence (2 bytes): 0x00, 0x01 (Keeps track of which ping this is, e.g., ping #1).</li>
+> </ol>
 
