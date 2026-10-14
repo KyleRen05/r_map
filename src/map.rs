@@ -1,11 +1,11 @@
 use std::io::Read;
-use std::f32::consts::E;
+//use std::f32::consts::E;
 use std::net::IpAddr;
-use std::ptr::addr_of_mut;
+//use std::ptr::addr_of_mut;
 use std::time::{Duration, Instant};
-use std::mem::MaybeUninit;
-use etherparse::checksum;
-use pnet::packet::ipv4::Ipv4;
+//use std::mem::MaybeUninit;
+//use etherparse::checksum;
+//use pnet::packet::ipv4::Ipv4;
 use socket2::{Domain, Protocol, Socket, Type};
 
 // Public enum for ping output
@@ -102,9 +102,4 @@ pub async fn ping(target: IpAddr, timeout: Duration) -> PingStatus {
         }
     }
 
-}
-
-
-fn main(){
-    println!("main map.rs")
 }
