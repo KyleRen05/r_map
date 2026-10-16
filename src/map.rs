@@ -1,11 +1,10 @@
 use std::io::Read;
-use std::net::IpAddr;
-use std::ops::ControlFlow::Continue;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
-use etherparse::ip_number::ICMP;
-use pnet::packet::icmp;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashSet;
+use std::mem::MaybeUninit;
+use tokio::task;
 
 // Public enum for ping output
 #[derive(Debug)]
@@ -82,6 +81,10 @@ pub async fn ping(target: IpAddr, timeout: Duration) -> PingStatus {
         Err(e) => return PingStatus::NetworkError(e),
     };
 
+    if let Err(e) = socket.set_read_timeout(Some(Duration::from_millis(1))) {
+        return PingStatus::NetworkError(e);
+    }
+
     let packet = icmp_packet();
 
     // sending packet
@@ -95,24 +98,36 @@ pub async fn ping(target: IpAddr, timeout: Duration) -> PingStatus {
     }
 
     // Receive loop
-    let mut buf: [u8; 1024] = [0; 1024];
+    let mut buf = [MaybeUninit::<u8>::uninit(); 1024];
     loop {
         if start_time.elapsed() > timeout {
             return PingStatus::TimedOut;
         }
 
-        match socket.read(&mut buf) {
-            Ok(bytes_read) => {
+        match socket.recv_from(&mut buf) {
+            Ok((bytes_read, sender_addr)) => {
                 let ip_header_len = 20;
                 if bytes_read > ip_header_len {
-                    let icmp_packet = &buf[ip_header_len..bytes_read];
+                    let initialized_buf: &[u8] = unsafe {
+                        std::slice::from_raw_parts(buf.as_ptr() as *const u8, bytes_read)
+                    };
+
+                    let icmp_packet = &initialized_buf[ip_header_len..bytes_read];
+                    
                     if icmp_packet.len() > 1 && icmp_packet[0] == 0 {
-                        return PingStatus::Reply(start_time.elapsed());
+                        // 3. Extract the IP and verify it matches our specific target
+                        if let Some(standard_addr) = sender_addr.as_socket() {
+                            if standard_addr.ip() == target {
+                                return PingStatus::Reply(start_time.elapsed());
+                            }
+                        }
                     }
                 }
             }
-
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
             Err(e) => return PingStatus::NetworkError(e),
         }
     }
@@ -120,24 +135,29 @@ pub async fn ping(target: IpAddr, timeout: Duration) -> PingStatus {
 } // ---- END PING FUNCTION ----
 
 // ---- BROADCAST FUNCTION ----
-pub fn broadcast(target: IpAddr, timeout: Duration) -> BroadcastStatus {
-    // braodcast address
-    let global_address = "255.255.255.255";
-
+pub async fn broadcast(target: IpAddr, timeout: Duration) -> BroadcastStatus {
     // create raw socket for broadcast
-    let mut domain: Domain = match target {
+    let domain: Domain = match target {
         IpAddr::V4(_) => Domain::IPV4,
         IpAddr::V6(_) => Domain::IPV6,
     };
 
-    let mut socket = match Socket::new(domain, Type::RAW, Some(Protocol::ICMPV4)) {
+    let socket = match Socket::new(domain, Type::RAW, Some(Protocol::ICMPV4)) {
         Ok(s) => s,
         Err(e) => return BroadcastStatus::NetworkError(e),
     };
 
-    let mut packet: Vec<u8> = icmp_packet();
+    if let Err(e) = socket.set_read_timeout(Some(timeout)) {
+        return BroadcastStatus::NetworkError(e);
+    }
 
-    socket.set_broadcast(true);
+    let packet: Vec<u8> = icmp_packet();
+
+    if let Err(e) = socket.set_broadcast(true) {
+        return BroadcastStatus::NetworkError(e);
+    }
+
+    //socket.set_broadcast(true);
 
     let addr = socket2::SockAddr::from(std::net::SocketAddr::new(target, 0));
 
@@ -148,10 +168,67 @@ pub fn broadcast(target: IpAddr, timeout: Duration) -> BroadcastStatus {
         return BroadcastStatus::NetworkError(e);
     }
 
+    // Receive loop
+    let mut discovered_ips = HashSet::new();
+    let mut buffer = [MaybeUninit::<u8>::uninit(); 1024];
 
+    loop {
+        if start_time.elapsed() > timeout {
+            break;
+        }
+        match socket.recv_from(&mut buffer) {
+            Ok((bytes_read, sender_addr)) => {
+                let ip_header_len = 20;
+                if bytes_read > 20 {
+                    // cast uninitialized buffer back to u8 for safe read
+                    let initialized_buf: &[u8] = unsafe {
+                        std::slice::from_raw_parts(buffer.as_ptr() as *const u8, bytes_read)
+                    };
 
-    // change 
-    return BroadcastStatus::NetworkError("Error");
+                    let icmp_packet = &initialized_buf[ip_header_len..bytes_read];
 
+                    if icmp_packet.len() > 1 && icmp_packet[0] == 0 {
+                        // extract ip address
+                        if let Some(standard_addr) = sender_addr.as_socket() {
+                            discovered_ips.insert(standard_addr.ip());
+                        }
+                    }
+                }
+            }
 
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(e) => return BroadcastStatus::NetworkError(e),
+        }
+    
+    }
+
+    return BroadcastStatus::Completed(discovered_ips);
 } // ---- END BROADCAST FUNCTION ----
+
+
+// ---- PING SWEEP FUNCTION ----
+pub async fn ping_sweep(base_ip: [u8; 3], timeout: Duration) -> Vec<(IpAddr, Duration)> {
+    let mut tasks = vec![];
+
+    for i in 1..=254 {
+        let target_ip = IpAddr::V4(Ipv4Addr::new(base_ip[0], base_ip[1], base_ip[2], i));
+
+        let task = tokio::spawn(async move {
+            let status = ping(target_ip, timeout).await;
+            (target_ip, status)
+        });
+        tasks.push(task);
+    }
+
+    let mut active_hosts = Vec::new();
+
+    for task in tasks {
+        if let Ok((ip, status)) = task.await {
+            if let PingStatus::Reply(duration) = status {
+                active_hosts.push((ip, duration));
+            }
+        }
+    }
+    active_hosts
+
+} // ---- END PING SWEEP FUNCTION ----
