@@ -1,12 +1,11 @@
 use std::io::Read;
-//use std::f32::consts::E;
 use std::net::IpAddr;
-//use std::ptr::addr_of_mut;
+use std::ops::ControlFlow::Continue;
 use std::time::{Duration, Instant};
-//use std::mem::MaybeUninit;
-//use etherparse::checksum;
-//use pnet::packet::ipv4::Ipv4;
+use etherparse::ip_number::ICMP;
+use pnet::packet::icmp;
 use socket2::{Domain, Protocol, Socket, Type};
+use std::collections::HashSet;
 
 // Public enum for ping output
 #[derive(Debug)]
@@ -16,7 +15,15 @@ pub enum PingStatus{
     NetworkError(std::io::Error),
 }
 
-// function to calculate checksum 
+// Public enum for Broadcast output
+#[derive(Debug)]
+pub enum BroadcastStatus {
+    Completed(HashSet<IpAddr>),
+    NetworkError(std::io::Error),
+}
+
+
+// ---- CHECKSUM FUNCTION ----
 fn calculate_checksum(data: &[u8]) -> u16 {
     // takes slice of bytes and returns 16-bit integer
 
@@ -45,9 +52,24 @@ fn calculate_checksum(data: &[u8]) -> u16 {
     // flip all the bits (!) to finalize checksum
     !sum as u16
 
+} // ---- END CHECKSUM FUNCTION ----
+
+// ---- ICMP PACKET PAYLOAD FUNCTION ----
+fn icmp_packet() -> Vec<u8> {
+    let mut packet: Vec<u8> = vec![8, 0, 0, 0, 0x12, 0x34, 0x00, 0x01];
+
+    packet.extend_from_slice(b"HelloRust");
+
+    // calculate checksum of packet
+    let checksum = calculate_checksum(&packet);
+
+    // slice notation - grab 3rd and 4th bytes adn overwrite with checksum value
+    packet[2..4].copy_from_slice(&checksum.to_be_bytes());
+
+    packet
 }
 
-// Ping Function
+// ---- PING FUNCTION ----
 pub async fn ping(target: IpAddr, timeout: Duration) -> PingStatus {
     let domain = match target {
         IpAddr::V4(_) => Domain::IPV4,
@@ -60,14 +82,7 @@ pub async fn ping(target: IpAddr, timeout: Duration) -> PingStatus {
         Err(e) => return PingStatus::NetworkError(e),
     };
 
-    let mut packet = vec![8, 0, 0, 0, 0x12, 0x34, 0x00, 0x01];
-    packet.extend_from_slice(b"HelloRust");
-
-    // calculate checksum of packet
-    let checksum = calculate_checksum(&packet);
-
-    // slice notation - grab 3rd and 4th bytes adn overwrite with checksum value
-    packet[2..4].copy_from_slice(&checksum.to_be_bytes());
+    let packet = icmp_packet();
 
     // sending packet
     // convert Rust standard IPAddr into socket2 format
@@ -102,4 +117,41 @@ pub async fn ping(target: IpAddr, timeout: Duration) -> PingStatus {
         }
     }
 
-}
+} // ---- END PING FUNCTION ----
+
+// ---- BROADCAST FUNCTION ----
+pub fn broadcast(target: IpAddr, timeout: Duration) -> BroadcastStatus {
+    // braodcast address
+    let global_address = "255.255.255.255";
+
+    // create raw socket for broadcast
+    let mut domain: Domain = match target {
+        IpAddr::V4(_) => Domain::IPV4,
+        IpAddr::V6(_) => Domain::IPV6,
+    };
+
+    let mut socket = match Socket::new(domain, Type::RAW, Some(Protocol::ICMPV4)) {
+        Ok(s) => s,
+        Err(e) => return BroadcastStatus::NetworkError(e),
+    };
+
+    let mut packet: Vec<u8> = icmp_packet();
+
+    socket.set_broadcast(true);
+
+    let addr = socket2::SockAddr::from(std::net::SocketAddr::new(target, 0));
+
+    let start_time: Instant = Instant::now();
+
+    // send packet
+    if let Err(e) = socket.send_to(&packet, &addr) {
+        return BroadcastStatus::NetworkError(e);
+    }
+
+
+
+    // change 
+    return BroadcastStatus::NetworkError("Error");
+
+
+} // ---- END BROADCAST FUNCTION ----
