@@ -43,3 +43,4 @@ The point of network mapping is to create a map of all the devices connected to 
 > <li>Sequence (2 bytes): 0x00, 0x01 (Keeps track of which ping this is, e.g., ping #1).</li>
 > </ol>
 
+### add broadcast documentation
