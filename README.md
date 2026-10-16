@@ -28,12 +28,12 @@ The point of network mapping is to create a map of all the devices connected to 
 
 ## Helper Functions
 
-> ### caclulate_checksum
->
+### caclulate_checksum
+
 > Checksum algorithms are used to detect errors, tampering, or irregularities in data sent over a network.<br/>The purpose of this helper function is to calculate the checksum for the ICMP packet being sent to see if the packets were correctly received by the target IP address.
 
-> ### pub async fn ping
->
+### pub async fn ping
+
 > ICMP Header<br/>
 > <ol>
 > <li>Type (1 byte): 8 means "Echo Request".</li>
