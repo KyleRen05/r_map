@@ -1,5 +1,6 @@
 mod map;
 
+use std::io;
 use std::net::IpAddr;
 use std::time::Duration;
 use map::{ping, PingStatus}; // Import function and enum
@@ -8,7 +9,11 @@ use map::{ping, PingStatus}; // Import function and enum
 async fn main() {
     // Define the target (Google's public DNS)
     // .parse() safely converts a string into the IpAddr enum type.
-    let target_ip: IpAddr = "8.8.8.8".parse().expect("Invalid IP address format");
+    let mut t_ip: String = String::new();
+    println!("Please enter a valid IP address");
+    io::stdin().read_line(&mut t_ip).expect("Failed to read IP Addr");
+
+    let target_ip: IpAddr = t_ip.trim().parse().expect("Invalid IP address format");
     
     // Set timeout limit
     let timeout = Duration::from_secs(2);
